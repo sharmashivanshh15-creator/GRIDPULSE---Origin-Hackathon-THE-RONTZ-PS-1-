@@ -185,9 +185,33 @@ def load_model():
     if not MODEL_PATH.exists():
         raise FileNotFoundError(f"Missing model: {MODEL_PATH}")
 
-    model = XGBRegressor()
-    model.load_model(MODEL_PATH)
-    return model
+    # GitHub web uploads can leave leading CR/BOM/whitespace in a JSON
+    # model file. XGBoost expects the first byte to be the JSON opening brace.
+    raw = MODEL_PATH.read_bytes()
+    raw = raw.lstrip(b"\xef\xbb\xbf\r\n\t ")
+
+    if not raw.startswith(b"{"):
+        preview = raw[:80].decode("utf-8", errors="replace")
+        raise ValueError(
+            "The uploaded XGBoost model file is not valid JSON. "
+            f"First bytes: {preview!r}"
+        )
+
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(mode="wb", suffix=".json", delete=False) as tmp:
+        tmp.write(raw)
+        clean_path = tmp.name
+
+    try:
+        model = XGBRegressor()
+        model.load_model(clean_path)
+        return model
+    finally:
+        try:
+            Path(clean_path).unlink()
+        except OSError:
+            pass
 
 
 # ============================================================
